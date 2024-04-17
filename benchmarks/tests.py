@@ -28,8 +28,8 @@ def SSIM(original, processed):
     # [0,255] before we can use it with OpenCV
 
 def main():
-     im_name = "58.png"
-     approach = "dadfnet"
+     im_name = "3.png"
+     approach = "our_approach"
      original = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/input/{im_name}")
      processed = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/output/{approach}/{im_name}", 1)
      value = PSNR(original, processed)

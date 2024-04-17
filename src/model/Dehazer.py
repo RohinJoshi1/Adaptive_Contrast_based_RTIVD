@@ -95,7 +95,7 @@ class Dehazing:
 
     def RestoreImage(self,gamma=1.05):
         img_out = np.zeros(self.img_input.shape)
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.5))
+        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.4))
         for i in range(3):
             img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - AtmosphericLight[i]) / self.pfTransmission + AtmosphericLight[i]),0,255)
 
@@ -115,7 +115,7 @@ class Dehazing:
         meanB = cv2.boxFilter(b, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
         res = meanA * self.imgY/255 + meanB
         self.pfTransmission = res
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.5))  # clip transmission => larger than 0.3
+        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.4))  # clip transmission => larger than 0.3
 
     def boxfilter(self,imSrc, r):
         """
@@ -210,7 +210,7 @@ class Dehazing:
 
 
 def main():
-    im_name = "77.png"
+    im_name = "48.png"
     approach = "our_approach"
     im = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/input/{im_name}")
     # scale_factor = 0.5
