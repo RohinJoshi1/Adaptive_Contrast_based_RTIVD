@@ -28,9 +28,10 @@ def SSIM(original, processed):
     # [0,255] before we can use it with OpenCV
 
 def main():
-     im_name = "77.png"
+     im_name = "58.png"
+     approach = "dadfnet"
      original = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/input/{im_name}")
-     processed = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/output/{im_name}", 1)
+     processed = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/output/{approach}/{im_name}", 1)
      value = PSNR(original, processed)
      print(f"PSNR value is {value} dB")
      value = SSIM(original=original,processed=processed)
