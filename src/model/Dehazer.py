@@ -211,6 +211,7 @@ class Dehazing:
 
 def main():
     im_name = "77.png"
+    approach = "our_approach"
     im = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/input/{im_name}")
     # scale_factor = 0.5
     # dhz_img = im
@@ -248,7 +249,7 @@ def main():
     # print(f"Cv2 takes {(time.time()-start)*1000}ms ")
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
-    cv2.imwrite(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/output/{im_name}", result_img)
+    cv2.imwrite(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/output/{approach}/{im_name}", result_img)
 
 
     # elif args.type == 'video':
