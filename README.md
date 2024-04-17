@@ -27,13 +27,13 @@ To run test:
 
 ### Directory layout:
 
-benchmarks/tests.py
-input/...
-output/...
-src/
-model/
-gpu_model
-cpu_model
+    benchmarks/tests.py
+    input/...
+    output/...
+    src/
+    model/
+    gpu_model
+    cpu_model
 
 ## Metrics:
 
