@@ -95,7 +95,7 @@ class Dehazing:
 
     def RestoreImage(self,gamma=1.05):
         img_out = np.zeros(self.img_input.shape)
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.4))
+        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.5))
         for i in range(3):
             img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - AtmosphericLight[i]) / self.pfTransmission + AtmosphericLight[i]),0,255)
 
@@ -115,7 +115,7 @@ class Dehazing:
         meanB = cv2.boxFilter(b, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
         res = meanA * self.imgY/255 + meanB
         self.pfTransmission = res
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.4))  # clip transmission => larger than 0.3
+        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.5))
 
     def boxfilter(self,imSrc, r):
         """
@@ -150,67 +150,9 @@ class Dehazing:
 
         return imDst
 
-    # def fast_gradient(self,r=20,eps=0.001) -> np.ndarray:
-    #     """
-    #     GUIDEDFILTER   O(1) time implementation of guided filter.
-
-    #     - guidance image: I (should be a gray-scale/single channel image)
-    #     - filtering input image: p (should be a gray-scale/single channel image)
-    #     - regularization parameter: eps
-    #     """
-    #     height = 36
-    #     width = 64
-    #     im = self.imgY
-    #     p = self.pfTransmission
-
-    #     eps = eps ** 2
-    #     N = self.boxfilter(np.ones((height,width), dtype=np.float32), r)
-    #     N1 = self.boxfilter(np.ones((height,width), dtype=np.float32), 1)
-    #     s_end = tuple(reversed(im.shape[:2]))
-    #     s_start = (width, height)
-
-    #     im_sub = cv2.resize(im, s_start, interpolation=cv2.INTER_NEAREST)
-    #     p_sub = cv2.resize(p, s_start, interpolation=cv2.INTER_NEAREST)
-
-    #     mean_im = np.divide(self.boxfilter(im_sub,r), N)
-    #     mean_p = np.divide(self.boxfilter(p_sub, r), N)
-    #     mean_imp = np.divide(self.boxfilter(np.multiply(im_sub, p_sub),r), N)
-    #     # Covariance matrix of (im, p) in each local patch
-    #     cov_imp = mean_imp - np.multiply(mean_im, mean_p)
-    #     mean_imim = np.divide(self.boxfilter(np.multiply(im_sub, im_sub), r), N)
-    #     var_im = mean_imim - np.multiply(mean_im, mean_im)
-    #     r1 = 4
-    #     # Weight
-    #     epsilon = (0.01 * (np.max(p_sub) - np.min(p_sub)))**2
-
-    #     # N1 = boxfilter(np.ones((args.heigt, args.width), dtype=np.float32), args.r1);
-    #     # the size of each local patch; N=(2r+1)^2 except for boundary pixels.
-
-    #     mean_im1 = np.divide(self.boxfilter(im_sub, r1), N1)
-    #     mean_imim1 = np.divide(self.boxfilter(np.multiply(im_sub,im_sub),r1), N1)
-    #     var_im1 = mean_imim1 - np.multiply(mean_im1, mean_im1)
-
-    #     chi_im = np.sqrt(np.abs(var_im1, var_im))
-    #     weight = (chi_im + epsilon) / (np.mean(chi_im) + epsilon)
-
-    #     gamma = (4/np.mean(chi_im) - np.min(chi_im)) * (chi_im - np.mean(chi_im))
-    #     gamma = 1 - np.divide(1, (1 + np.exp(gamma)))
-
-    #     # Result
-    #     a = (cov_imp + np.divide(np.multiply(np.divide(eps, weight), gamma), (var_im + np.divide(eps, weight))))
-    #     b = mean_p - np.multiply(a, mean_im)
-
-    #     mean_a = np.divide(self.boxfilter(a, r), N)
-    #     mean_b = np.divide(self.boxfilter(b, r), N)
-    #     mean_a = cv2.resize(mean_a, s_end, interpolation=cv2.INTER_LINEAR)
-    #     mean_b = cv2.resize(mean_b, s_end, interpolation=cv2.INTER_LINEAR)
-
-    #     q = np.multiply(mean_a, im) + mean_b
-    #     return q
-
 
 def main():
-    im_name = "48.png"
+    im_name = "14.png"
     approach = "our_approach"
     im = cv2.imread(f"/Users/rohinjoshi/Work/codes/MajorProject/playground/test/RTVD/final/input/{im_name}")
     # scale_factor = 0.5
@@ -223,8 +165,8 @@ def main():
     # new_width = int(width * scale_factor)
 
     # # Downscale the image
-    # downscaled_img = cv2.resize(im, (new_width, new_height), interpolation=cv2.INTER_AREA)
-    # im = downscaled_img
+    downscaled_img = cv2.resize(im, (480,360), interpolation=cv2.INTER_AREA)
+    im = downscaled_img
 
 
     dehaze_img = Dehazing(im)
