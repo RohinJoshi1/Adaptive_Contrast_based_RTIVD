@@ -93,7 +93,7 @@ class Dehazing:
                         fOptTrs[i:i+blk_size,j:j+blk_size] = fTrans
         self.pfTransmission = fOptTrs
 
-    def RestoreImage(self,gamma=1.05):
+    def RestoreImage(self):
         img_out = np.zeros(self.img_input.shape)
         self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.5))
         for i in range(3):
