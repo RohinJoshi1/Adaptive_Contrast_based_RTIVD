@@ -70,10 +70,6 @@ class Dehazer:
     def update_previous_frame(self, current_frame):
         self.previous_frame = current_frame
 
-    def updateCurrentFrame(self, frame):
-        self.img_input = frame
-        self.imgY = cv2.cvtColor(frame, cv2.COLOR_BGR2YCR_CB)[:,:,0]
-        self.imgY_gpu = cp.asarray(self.imgY)
 
     def AirLightEstimation(self, origin, height, width):
         UpperLeft  = self.img_input[origin[0]:origin[0]+int(round(height/2)), origin[1]:origin[1]+int(round(width/2))]
@@ -304,14 +300,12 @@ def dehaze_video(video_url):
             
             start = time.time()
                       #
-            dhz.updateCurrentFrame(frame)
             if cnt==0:                                   # use the airlight of the first frame
                 dhz.AirLightEstimation((0,0), frame.shape[0], frame.shape[1])
             blk_size = 8
 
             frame_diff = dhz.calculate_frame_difference()
-            if frame_diff > 0.65:
-                # print("Frame difference is large, calculating transmission map")
+            if frame_diff > 0.5:
                 prev_tms = dhz.TransmissionEstimation(blk_size)
             else:
                 # print("Frame difference is too small, using previous frame transmission map")
@@ -325,7 +319,7 @@ def dehaze_video(video_url):
 
             end = time.time()
             frame_times.append(end-start)
-            print(end-start, ",")
+            # print(end-start, ",")
 
             cv2.namedWindow('result_img', cv2.WINDOW_NORMAL)
             cv2.imshow('result_img', im)
@@ -340,4 +334,4 @@ def dehaze_video(video_url):
 
         if cv2.waitKey(1) & 0xFF == ord('q'):   break
 
-dehaze_video("./403.mp4")
+dehaze_video("./111.mp4")
