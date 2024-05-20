@@ -18,6 +18,7 @@ class Dehazing:
         self.width = self.img_input.shape[1]
         self.height = self.img_input.shape[0]
         self.pfTransmission = np.zeros(img_input.shape[:2])
+        self.previous_pfTransmission = np.zeros(img_input.shape[:2]) 
 
 
     def GaussianTransmissionRefine(self):

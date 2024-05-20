@@ -6,6 +6,8 @@ from numba import cuda
 import cupy as cp
 import numpy as np
 import time
+import cv2
+
 CLIP = lambda x: np.uint8(max(0, min(x, 255)))
 AtmosphericLight_Y = 0
 AtmosphericLight = np.zeros(3)
@@ -54,6 +56,19 @@ class Dehazer:
         self.width = self.img_input.shape[1]
         self.height = self.img_input.shape[0]
         self.pfTransmission = np.zeros(img_input.shape[:2])
+        self.previous_pfTransmission = np.zeros(img_input.shape[:2])
+        self.previous_frame = None
+
+    def calculate_frame_difference(self):
+        if self.previous_frame is None:
+            return 100
+        previous_gray = cv2.cvtColor(self.previous_frame, cv2.COLOR_BGR2GRAY)
+        current_gray = cv2.cvtColor(self.img_input, cv2.COLOR_BGR2GRAY)
+        frame_diff = cv2.absdiff(current_gray, previous_gray)
+        return np.mean(frame_diff)
+
+    def update_previous_frame(self, current_frame):
+        self.previous_frame = current_frame
 
     def AirLightEstimation(self, origin, height, width):
         UpperLeft  = self.img_input[origin[0]:origin[0]+int(round(height/2)), origin[1]:origin[1]+int(round(width/2))]
@@ -174,9 +189,7 @@ class Dehazer:
                 MinE[i, j] = E
                 fOptTrs[i, j] = fTrans
 
-
-
-    def TransmissionEstimation(self, blk_size):
+    def TransmissionEstimation(self, blk_size, alpha=0.9):
         maxx = (self.height // blk_size) * blk_size
         maxy = (self.width // blk_size) * blk_size
         lamdaL = 4
@@ -185,7 +198,7 @@ class Dehazer:
         average_gpu = cp.zeros(self.imgY.shape)
         threads_per_block = (min(blk_size, self.height), min(blk_size, self.width))
         blocks_per_grid = ((maxx + threads_per_block[0]-1) // threads_per_block[0],
-                          (maxy + threads_per_block[1]-1) // threads_per_block[1])
+                        (maxy + threads_per_block[1]-1) // threads_per_block[1])
         start = time.time()
         self.calculate_average_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu, blk_size, self.height, self.width)
         for t, fTrans in enumerate(np.linspace(0.3, 1, 8)):
@@ -193,13 +206,14 @@ class Dehazer:
             over255_gpu = cp.zeros(self.imgY.shape)
             lower0_gpu = cp.zeros(self.imgY.shape)
             start = time.time()
-            #(imgY, average, fTrans, Econtrast, over255, lower0, AtmosphericLight_Y, blk_size, height, width)
-            # (imgY, average, fTrans, Econtrast, over255, lower0, AtmosphericLight_Y, height, width):
-            self.calculate_econtrast_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu.astype('uint8'), fTrans, Econtrast_gpu, over255_gpu, lower0_gpu, self.AtmosphericLight_Y,blk_size, self.height, self.width)
+            self.calculate_econtrast_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu.astype('uint8'), fTrans, Econtrast_gpu, over255_gpu, lower0_gpu, self.AtmosphericLight_Y, blk_size, self.height, self.width)
             start = time.time()
             self.update_min_e_kernel[blocks_per_grid, threads_per_block](Econtrast_gpu, over255_gpu, lower0_gpu, MinE_gpu, fOptTrs_gpu, lamdaL, self.height, self.width, fTrans)
-        self.pfTransmission = cp.asnumpy(fOptTrs_gpu)
-
+        
+        # # Incorporate temporal coherence
+        # current_pfTransmission = cp.asnumpy(fOptTrs_gpu)
+        # self.pfTransmission = alpha * self.previous_pfTransmission + (1 - alpha) * current_pfTransmission
+        # self.previous_pfTransmission = self.pfTransmission  # Update previous frame transmission map
 
 
     def box_filter(self,arr, radius):
@@ -254,3 +268,51 @@ class Dehazer:
             img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - AtmosphericLight[i]) / self.pfTransmission + AtmosphericLight[i]),0,255)
 
         return img_out
+
+
+
+def dehaze_video(video_url):
+    video_capture = cv2.VideoCapture(video_url)
+    ret, init = video_capture.read()
+    h, w = init.shape[0], init.shape[1]
+    fps = video_capture.get(cv2.CAP_PROP_FPS)
+    print("fps:", fps, ", width:", w, ", height:", h)
+    video_capture = cv2.VideoCapture(video_url)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter("./output_video.mp4", fourcc, 30, (w, h))
+    cnt = 0
+    while True:
+        ret, frame = video_capture.read()
+        # frame =downscale_frame(frame)
+        cv2.namedWindow('input_img', cv2.WINDOW_NORMAL)
+        cv2.imshow('input_img', frame)
+        if ret == True:                   # process every 2 frames -> avoid lag
+            dhz = Dehazer(frame)
+            if cnt==0:                                   # use the airlight of the first frame
+                dhz.AirLightEstimation((0,0), frame.shape[0], frame.shape[1])
+            blk_size = 8
+            frame_diff = dhz.calculate_frame_difference()
+            if frame_diff > 5:
+                print("Frame difference is large, calculating transmission map")
+                dhz.TransmissionEstimation(blk_size)
+            else:
+                print("Frame difference is too small, using previous frame transmission map")
+                dhz.pfTransmission = dhz.previous_pfTransmission
+            dhz.GaussianTransmissionRefine()
+            eps = 0.001
+            dhz.GuidedFilter_GPU(20,eps)
+            im = dhz.RestoreImage().astype('uint8')
+            cv2.namedWindow('result_img', cv2.WINDOW_NORMAL)
+            cv2.imshow('result_img', im)
+            out.write(im)
+    #         #print(cnt)
+        elif ret != True:
+            video_capture.release()
+            out.release()
+            cv2.destroyAllWindows()
+            break
+        cnt += 1
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):   break
+
+dehaze_video("./403.mp4")
