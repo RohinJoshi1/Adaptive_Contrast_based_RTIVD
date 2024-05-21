@@ -56,7 +56,7 @@ class Dehazer:
         self.width = self.img_input.shape[1]
         self.height = self.img_input.shape[0]
         self.pfTransmission = np.zeros(img_input.shape[:2])
-        self.previous_pfTransmission = np.zeros(img_input.shape[:2])
+        self.previous_pfTransmission = None
         self.previous_frame = previous_frame
 
     def calculate_frame_difference(self):
@@ -66,9 +66,6 @@ class Dehazer:
         current_gray = cv2.cvtColor(self.img_input, cv2.COLOR_BGR2GRAY)
         frame_diff = cv2.absdiff(current_gray, previous_gray)
         return np.mean(frame_diff)
-
-    def update_previous_frame(self, current_frame):
-        self.previous_frame = current_frame
 
 
     def AirLightEstimation(self, origin, height, width):
@@ -190,7 +187,7 @@ class Dehazer:
                 MinE[i, j] = E
                 fOptTrs[i, j] = fTrans
 
-    def TransmissionEstimation(self, blk_size, alpha=0.9):
+    def TransmissionEstimation(self, blk_size, alpha=0.6):
         maxx = (self.height // blk_size) * blk_size
         maxy = (self.width // blk_size) * blk_size
         lamdaL = 4
@@ -211,9 +208,14 @@ class Dehazer:
             start = time.time()
             self.update_min_e_kernel[blocks_per_grid, threads_per_block](Econtrast_gpu, over255_gpu, lower0_gpu, MinE_gpu, fOptTrs_gpu, lamdaL, self.height, self.width, fTrans)
         
-        # # Incorporate temporal coherence
-        self.pfTransmission = cp.asnumpy(fOptTrs_gpu)
-        self.previous_pfTransmission = self.pfTransmission  # Update previous frame transmission map
+        current_pfTransmission = cp.asnumpy(fOptTrs_gpu)
+        if self.previous_pfTransmission is None:
+            self.pfTransmission = current_pfTransmission
+        else:
+            self.pfTransmission = alpha * self.previous_pfTransmission + (1 - alpha) * current_pfTransmission
+
+        self.previous_pfTransmission = self.pfTransmission
+
         return self.pfTransmission
 
     def box_filter(self,arr, radius):
@@ -305,7 +307,7 @@ def dehaze_video(video_url):
             blk_size = 8
 
             frame_diff = dhz.calculate_frame_difference()
-            if frame_diff > 0.5:
+            if frame_diff > 0.7:
                 prev_tms = dhz.TransmissionEstimation(blk_size)
             else:
                 # print("Frame difference is too small, using previous frame transmission map")
@@ -319,7 +321,7 @@ def dehaze_video(video_url):
 
             end = time.time()
             frame_times.append(end-start)
-            # print(end-start, ",")
+            print(end-start, ",")
 
             cv2.namedWindow('result_img', cv2.WINDOW_NORMAL)
             cv2.imshow('result_img', im)
@@ -334,4 +336,4 @@ def dehaze_video(video_url):
 
         if cv2.waitKey(1) & 0xFF == ord('q'):   break
 
-dehaze_video("./111.mp4")
+dehaze_video("./403.mp4")
