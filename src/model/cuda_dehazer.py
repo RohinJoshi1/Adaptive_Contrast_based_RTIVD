@@ -247,10 +247,34 @@ class Dehazer:
         self.pfTransmission = res
         self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.3))  # clip transmission => larger than 0.3
 
+    def calculate_fast_transmission_clip_metric(self,img_input, AtmosphericLight_Y):
+    # Sample a small subset of pixels for speed
+      sample_size = 50
+      sampled_pixels = img_input.reshape(-1, 3)[np.random.choice(img_input.size // 3, sample_size, replace=False)]
+      
+      # Calculate the average intensity of the sampled pixels
+      avg_intensity = np.mean(sampled_pixels)
+      
+      # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
+      diff = abs(avg_intensity - AtmosphericLight_Y) / 255
+      print(diff)
+  
+      # Map the difference to a range between 0.3 and 0.7
+      metric = 0.3 + diff*0.8
+      print(metric)
+      return np.ceil(metric*10)/10
+
+
+
     def RestoreImage(self):
         img_out = np.zeros(self.img_input.shape)
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.3))
+        
+        # Calculate the transmission clip value using our new ultra-fast metric
+        transmission_clip = self.calculate_fast_transmission_clip_metric(self.img_input, self.AtmosphericLight_Y)
+        
+        self.pfTransmission = np.maximum(self.pfTransmission, transmission_clip)
+        
         for i in range(3):
-            img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - AtmosphericLight[i]) / self.pfTransmission + AtmosphericLight[i]),0,255)
-
+            img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - self.AtmosphericLight[i]) / self.pfTransmission + self.AtmosphericLight[i]), 0, 255)
+        
         return img_out
