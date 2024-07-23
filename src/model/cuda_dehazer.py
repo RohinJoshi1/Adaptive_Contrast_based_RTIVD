@@ -193,8 +193,6 @@ class Dehazer:
             over255_gpu = cp.zeros(self.imgY.shape)
             lower0_gpu = cp.zeros(self.imgY.shape)
             start = time.time()
-            #(imgY, average, fTrans, Econtrast, over255, lower0, AtmosphericLight_Y, blk_size, height, width)
-            # (imgY, average, fTrans, Econtrast, over255, lower0, AtmosphericLight_Y, height, width):
             self.calculate_econtrast_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu.astype('uint8'), fTrans, Econtrast_gpu, over255_gpu, lower0_gpu, self.AtmosphericLight_Y,blk_size, self.height, self.width)
             start = time.time()
             self.update_min_e_kernel[blocks_per_grid, threads_per_block](Econtrast_gpu, over255_gpu, lower0_gpu, MinE_gpu, fOptTrs_gpu, lamdaL, self.height, self.width, fTrans)
@@ -230,36 +228,14 @@ class Dehazer:
         res = meanA * self.imgY_gpu / 255 + meanB
         self.pfTransmission_gpu = cp.maximum(res, cp.full((self.height, self.width), 0.3))
 
-
-    def GuidedFilter_CPU(self, rads, eps):
-      ## Gudance image is ImgY , input image is pfTransmission
-        meanI = cv2.boxFilter(self.imgY/255, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        meanP = cv2.boxFilter(self.pfTransmission, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        meanIP = cv2.boxFilter(self.imgY/255*self.pfTransmission, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        covIP = meanIP - meanI * meanP
-        meanII = cv2.boxFilter((self.imgY/255)**2, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        varI = meanII - meanI ** 2
-        a = covIP / (varI + eps)
-        b = meanP - a * meanI
-        meanA = cv2.boxFilter(a, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        meanB = cv2.boxFilter(b, -1, (rads,rads), borderType=cv2.BORDER_REPLICATE)
-        res = meanA * self.imgY/255 + meanB
-        self.pfTransmission = res
-        self.pfTransmission = np.maximum(self.pfTransmission, np.full((self.height, self.width), 0.3))  # clip transmission => larger than 0.3
-
     def calculate_fast_transmission_clip_metric(self,img_input, AtmosphericLight_Y):
     # Sample a small subset of pixels for speed
       sample_size = 50
       sampled_pixels = img_input.reshape(-1, 3)[np.random.choice(img_input.size // 3, sample_size, replace=False)]
-      
-      # Calculate the average intensity of the sampled pixels
       avg_intensity = np.mean(sampled_pixels)
-      
       # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
       diff = abs(avg_intensity - AtmosphericLight_Y) / 255
       print(diff)
-  
-      # Map the difference to a range between 0.3 and 0.7
       metric = 0.3 + diff*0.8
       print(metric)
       return np.ceil(metric*10)/10
@@ -268,8 +244,6 @@ class Dehazer:
 
     def RestoreImage(self):
         img_out = np.zeros(self.img_input.shape)
-        
-        # Calculate the transmission clip value using our new ultra-fast metric
         transmission_clip = self.calculate_fast_transmission_clip_metric(self.img_input, self.AtmosphericLight_Y)
         
         self.pfTransmission = np.maximum(self.pfTransmission, transmission_clip)
