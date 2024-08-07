@@ -1,5 +1,4 @@
 import cupyx.scipy.ndimage as cupy_filters
-
 from numba import int64
 import numba
 from numba import cuda
@@ -253,46 +252,115 @@ class Dehazer:
         
         return img_out
 
+class FastDehazerGPU:
+    def __init__(self, block_size=16):
+        self.block_size = block_size
+        self.prev_frame = None
+        self.temporal_coherence_threshold = 0.8
+
+        # CUDA kernel for motion vector calculation
+        self.motion_vector_kernel = cp.RawKernel(r'''
+        extern "C" __global__
+        void motion_vector_kernel(const float* frame1, const float* frame2, float2* motion_vectors, 
+                                  int width, int height, int block_size) {
+            int bx = blockIdx.x * block_size;
+            int by = blockIdx.y * block_size;
+            int tx = threadIdx.x;
+            int ty = threadIdx.y;
+            
+            int x = bx + tx;
+            int y = by + ty;
+            
+            if (x < width && y < height) {
+                float diff = 0.0f;
+                float edge_diff = 0.0f;
+                
+                for (int i = 0; i < block_size; i++) {
+                    for (int j = 0; j < block_size; j++) {
+                        int idx = (y + i) * width + (x + j);
+                        if ((y + i) < height && (x + j) < width) {
+                            diff += frame2[idx] - frame1[idx];
+                            
+                            // Simple edge detection
+                            if (i > 0 && j > 0) {
+                                float e1 = fabsf(frame1[idx] - frame1[idx - 1]) + fabsf(frame1[idx] - frame1[idx - width]);
+                                float e2 = fabsf(frame2[idx] - frame2[idx - 1]) + fabsf(frame2[idx] - frame2[idx - width]);
+                                edge_diff += fabsf(e2 - e1);
+                            }
+                        }
+                    }
+                }
+                
+                int block_idx = (y / block_size) * (width / block_size) + (x / block_size);
+                motion_vectors[block_idx] = make_float2(diff / (block_size * block_size), edge_diff / (block_size * block_size));
+            }
+        }
+        ''', 'motion_vector_kernel')
 
 
+    def calculate_temporal_coherence(self, curr_frame):
+        # Ensure curr_frame is on GPU
+        if not isinstance(curr_frame, cp.ndarray):
+            curr_frame = cp.asarray(curr_frame)
+        
+        # Convert to grayscale if necessary
+        if curr_frame.ndim == 3:
+            curr_frame = cp.mean(curr_frame, axis=2, dtype=cp.float32)
+        else:
+            curr_frame = curr_frame.astype(cp.float32)
+        
+        if self.prev_frame is None:
+            self.prev_frame = curr_frame
+            return 0.0
+        
+        height, width = curr_frame.shape
+        block_size = self.block_size
+        grid = ((width + block_size - 1) // block_size, (height + block_size - 1) // block_size)
+        block = (block_size, block_size)
+        
+        motion_vectors = cp.empty((height // block_size, width // block_size, 2), dtype=cp.float32)
+        
+        self.motion_vector_kernel(grid, block, (self.prev_frame, curr_frame, motion_vectors, width, height, block_size))
+        
+        mean_motion = cp.mean(motion_vectors, axis=(0, 1))
+        magnitude = cp.linalg.norm(mean_motion)
+        coherence = cp.clip(10* cp.exp(-magnitude),0,1)  
+        self.prev_frame = curr_frame
+        return float(coherence)
+
+    def set_temporal_coherence_threshold(self, threshold):
+        self.temporal_coherence_threshold = threshold
+
+    def get_temporal_coherence_threshold(self):
+        return self.temporal_coherence_threshold
 
 class FastDehazer(Dehazer):
-  def __init__(self, img_input):
-    super().__init__(img_input) 
-    self.previous_frame = None 
-    self.prev_transmission = None 
-    self.temporal_coherence_threshold = 0.8 
-    self.prev_downscaled_frame = None
-    self.prev_norm = -1.0
+    def __init__(self, img_input):
+        super().__init__(img_input)
+        self.prev_transmission = None
+        self.gpu_dehazer = FastDehazerGPU(block_size=8) 
+        self.gpu_dehazer.set_temporal_coherence_threshold(0.8)
+        self.gpu_dehazer.block_size = 8
 
-  def calculate_temporal_coherence(self,curr_frame):
-    #if this is the first frame, I'll keep the downscaled image and norm, and every consecutive frame will have to run a single op for new norm
-    if self.previous_frame is None:
-      self.previous_frame = cv2.resize(curr_frame, (64,64))
-      self.prev_norm = self.previous_frame - np.mean(self.previous_frame) / np.std(self.previous_frame)
-      return 0.0 
-    
-    curr_small = cv2.resize(curr_frame, (64,64))
-    curr_norm = curr_small - np.mean(curr_small) / np.std(curr_small) 
-    corr = np.mean(curr_norm * self.prev_norm) 
-    self.previous_frame = curr_small
-    self.prev_norm = curr_norm
-    return corr
-  
-  def process_frame(self,frame):
-    tc = self.calculate_temporal_coherence(frame)
-    if tc > self.temporal_coherence_threshold and self.prev_transmission is not None: 
-      self.pfTransmission = self.prev_transmission.copy()
-      self.GuidedFilter_GPU(20,0.01)
-    else: 
-      self.AirLightEstimation((0,0),self.height,self.width)
-      self.TransmissionEstimation(8)
-      self.GaussianTransmissionRefine()
-      self.GuidedFilter_GPU(20,0.01)
-    dehazed_frame = self.RestoreImage()
-    self.previous_frame = cv2.resize(frame, (64,64))
-    self.prev_transmission = self.pfTransmission.copy()
-    return dehazed_frame
+    def calculate_temporal_coherence(self, curr_frame):
+        return self.gpu_dehazer.calculate_temporal_coherence(curr_frame)
+
+    def process_frame(self, frame):
+        tc = self.calculate_temporal_coherence(frame)
+        if tc > self.gpu_dehazer.get_temporal_coherence_threshold() and self.prev_transmission is not None:
+            print("TEMPORAL COHERENCE:",tc)
+            self.pfTransmission = self.prev_transmission.copy()
+            self.GuidedFilter_GPU(20, 0.01)
+            
+
+        else:
+            self.AirLightEstimation((0,0), self.height, self.width)
+            self.TransmissionEstimation(8)
+            self.GaussianTransmissionRefine()
+            self.GuidedFilter_GPU(20, 0.01)
+        dehazed_frame = self.RestoreImage()
+        self.prev_transmission = self.pfTransmission.copy()
+        return dehazed_frame
 
 
 def downscale_frame(dhz_img):
@@ -308,8 +376,6 @@ def downscale_frame(dhz_img):
     downscaled_img = cv2.resize(dhz_img, (400,300), interpolation=cv2.INTER_LINEAR)
     dhz_img = downscaled_img
     return dhz_img
-
-
 
 def dehaze_img(img):
   dhz_img = downscale_frame(img)
