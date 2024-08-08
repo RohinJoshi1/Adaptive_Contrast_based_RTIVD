@@ -5,6 +5,7 @@ from numba import cuda
 import cupy as cp
 import numpy as np
 import time
+import cv2
 CLIP = lambda x: np.uint8(max(0, min(x, 255)))
 AtmosphericLight_Y = 0
 AtmosphericLight = np.zeros(3)
@@ -53,6 +54,14 @@ class Dehazer:
         self.width = self.img_input.shape[1]
         self.height = self.img_input.shape[0]
         self.pfTransmission = np.zeros(img_input.shape[:2])
+
+    def setNewImage(self, img_input):
+        self.img_input = img_input
+        self.imgY = cv2.cvtColor(img_input, cv2.COLOR_BGR2YCR_CB)[:,:,0]
+        self.imgY_gpu = cp.asarray(self.imgY)
+        self.width = self.img_input.shape[1]
+        self.height = self.img_input.shape[0]
+
 
     def AirLightEstimation(self, origin, height, width):
         UpperLeft  = self.img_input[origin[0]:origin[0]+int(round(height/2)), origin[1]:origin[1]+int(round(width/2))]
@@ -234,12 +243,8 @@ class Dehazer:
       avg_intensity = np.mean(sampled_pixels)
       # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
       diff = abs(avg_intensity - AtmosphericLight_Y) / 255
-      print(diff)
       metric = 0.3 + diff*0.8
-      print(metric)
       return np.ceil(metric*10)/10
-
-
 
     def RestoreImage(self):
         img_out = np.zeros(self.img_input.shape)
@@ -256,6 +261,7 @@ class FastDehazerGPU:
     def __init__(self, block_size=16):
         self.block_size = block_size
         self.prev_frame = None
+        self.meanMagnitude = None
         self.temporal_coherence_threshold = 0.8
 
         # CUDA kernel for motion vector calculation
@@ -310,6 +316,7 @@ class FastDehazerGPU:
             curr_frame = curr_frame.astype(cp.float32)
         
         if self.prev_frame is None:
+            print("Setting prev_frame")
             self.prev_frame = curr_frame
             return 0.0
         
@@ -323,8 +330,25 @@ class FastDehazerGPU:
         self.motion_vector_kernel(grid, block, (self.prev_frame, curr_frame, motion_vectors, width, height, block_size))
         
         mean_motion = cp.mean(motion_vectors, axis=(0, 1))
+
+
         magnitude = cp.linalg.norm(mean_motion)
-        coherence = cp.clip(10* cp.exp(-magnitude),0,1)  
+        # coherence = cp.clip(10 * cp.exp(-magnitude), 0, 1)
+
+
+        if self.meanMagnitude is None:
+            self.meanMagnitude = magnitude
+        else:
+            self.meanMagnitude = 0.9 * self.meanMagnitude + 0.1 * magnitude
+
+        # print("Magnitude:", magnitude)
+
+        # Calculate coherence using mean magnitude and the latest calculated magnitude 
+        coherence = 1 - cp.tanh(cp.abs(self.meanMagnitude - magnitude))
+
+        # coherence = cp.clip(10 * cp.exp(-magnitude), 0, 1)
+
+        # print("Coherence:", coherence)
         self.prev_frame = curr_frame
         return float(coherence)
 
@@ -347,13 +371,13 @@ class FastDehazer(Dehazer):
 
     def process_frame(self, frame):
         tc = self.calculate_temporal_coherence(frame)
+        self.setNewImage(frame)
         if tc > self.gpu_dehazer.get_temporal_coherence_threshold() and self.prev_transmission is not None:
-            print("TEMPORAL COHERENCE:",tc)
+            print("PT")
             self.pfTransmission = self.prev_transmission.copy()
             self.GuidedFilter_GPU(20, 0.01)
-            
-
         else:
+            print("RECALCULATING TRANSMISSION")
             self.AirLightEstimation((0,0), self.height, self.width)
             self.TransmissionEstimation(8)
             self.GaussianTransmissionRefine()
@@ -397,44 +421,29 @@ def dehaze_video(video_url):
     h, w = init.shape[0], init.shape[1]
     fps = video_capture.get(cv2.CAP_PROP_FPS)
     print("fps:", fps, ", width:", w, ", height:", h)
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter("./output_video.mp4", fourcc, fps, (w, h))
+    
+    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    out = cv2.VideoWriter("output_video.mp4", fourcc, 20, (w, h))
+
+
     cnt = 0
-    dehazer = None
+    dehazer = FastDehazer(downscale_frame(init))
+
     while True:
         ret, frame = video_capture.read()
         frame =  downscale_frame(frame)
-        if dehazer is None: 
-          dehazer = FastDehazer(frame)
-        dehazed_frame = dehazer.process_frame(frame)
+        dehazed_frame = dehazer.process_frame(frame).astype('uint8')
+        # dehazed_frame = dehaze_img(frame)
+        out.write(dehazed_frame)
         cv2.imshow('Dehazed Frame',dehazed_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-          break
-        # if ret == True and cnt % 2 == 0:
-        #     dhz = Dehazer(frame)
-        #     if cnt==0:                                   # use the airlight of the first frame
-        #         dhz.AirLightEstimation((0,0), frame.shape[0], frame.shape[1])
-        #     blk_size = 8
-        #     dhz.TransmissionEstimation(blk_size)
-        #     dhz.GaussianTransmissionRefine()
-        #     eps = 0.001
-        #     dhz.GuidedFilter_GPU(20,eps)
-        #     im = dhz.RestoreImage().astype('uint8')
-        #     cv2.namedWindow('result_img', cv2.WINDOW_NORMAL)
-        #     cv2.imshow('result_img', im)
-        #     out.write(im)
-    #         #print(cnt)
-        elif ret != True:
-            video_capture.release()
-            out.release()
-            cv2.destroyAllWindows()
-            break
         cnt += 1
-
         if cv2.waitKey(1) & 0xFF == ord('q'):   break 
 
+    video_capture.release()
+    # out.release()
+    cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
-    # dehaze_img(cv2.imread('./test_images/test_image_1.jpg'))
-    dehaze_video('./test_videos/test_video_1.mp4')
+    # cv2.imwrite("./3.png", dehaze_img(cv2.imread('../input/3.png')))
+    dehaze_video('../input/hazyVideo.mp4')
