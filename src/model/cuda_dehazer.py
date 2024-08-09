@@ -5,11 +5,13 @@ from numba import cuda
 import cupy as cp
 import numpy as np
 import time
+import cv2
 import math
 CLIP = lambda x: np.uint8(max(0, min(x, 255)))
 AtmosphericLight_Y = 0
 AtmosphericLight = np.zeros(3)
-
+BLOCK_SIZE = 5
+TILE_SIZE = 5
 ## 30 FPS @ img size (300 x 400)[h,w]
 @cuda.jit
 def box_filter_kernel(input_arr, output_arr, width, height, radius):
@@ -93,7 +95,7 @@ class Dehazer:
 
 
     def GaussianTransmissionRefine(self):
-            r = 29  # radius of the Gaussian filter
+            r = 15
 
             # Apply Gaussian filtering to the transmission map
             t = cv2.GaussianBlur(self.pfTransmission, (r, r), 0)
@@ -109,7 +111,8 @@ class Dehazer:
         i, j = cuda.grid(2)
         bx, by = cuda.blockIdx.x, cuda.blockIdx.y
         tx, ty = cuda.threadIdx.x, cuda.threadIdx.y
-        tile_width, tile_height = 8,8
+        tile_width, tile_height = TILE_SIZE,TILE_SIZE
+        blk_size = 8
 
         shared = cuda.shared.array(shape=(tile_height, tile_width), dtype='int64')
 
@@ -139,8 +142,8 @@ class Dehazer:
         i, j = cuda.grid(2)
         bx, by = cuda.blockIdx.x, cuda.blockIdx.y
         tx, ty = cuda.threadIdx.x, cuda.threadIdx.y
-        tile_width, tile_height = 8,8
-
+        tile_width, tile_height = TILE_SIZE,TILE_SIZE
+        blk_size = BLOCK_SIZE
         shared = cuda.shared.array(shape=(tile_height, tile_width), dtype='uint8')
         avg_shared = cuda.shared.array(shape=(tile_height,tile_width),dtype='uint8')
 
@@ -177,24 +180,26 @@ class Dehazer:
 
 
     def TransmissionEstimation(self, blk_size):
+        blk_size = BLOCK_SIZE
+
         maxx = (self.height // blk_size) * blk_size
         maxy = (self.width // blk_size) * blk_size
         lamdaL = 4
         MinE_gpu = cp.full(self.imgY.shape, 1e10)
         fOptTrs_gpu = cp.zeros(self.imgY.shape)
         average_gpu = cp.zeros(self.imgY.shape)
-        threads_per_block = (min(blk_size, self.height), min(blk_size, self.width))
+        # threads_per_block = (min(blk_size, self.height), min(blk_size, self.width))
+
+        threads_per_block = (BLOCK_SIZE,BLOCK_SIZE)
         blocks_per_grid = ((maxx + threads_per_block[0]-1) // threads_per_block[0],
                           (maxy + threads_per_block[1]-1) // threads_per_block[1])
-        start = time.time()
+
         self.calculate_average_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu, blk_size, self.height, self.width)
         for t, fTrans in enumerate(np.linspace(0.3, 1, 8)):
-            Econtrast_gpu = cp.zeros(self.imgY.shape)
-            over255_gpu = cp.zeros(self.imgY.shape)
-            lower0_gpu = cp.zeros(self.imgY.shape)
-            start = time.time()
+            Econtrast_gpu = cp.zeros(self.imgY.shape,dtype=cp.float32)
+            over255_gpu = cp.zeros(self.imgY.shape,dtype=cp.float32)
+            lower0_gpu = cp.zeros(self.imgY.shape,dtype= cp.uint8)
             self.calculate_econtrast_kernel[blocks_per_grid, threads_per_block](self.imgY_gpu, average_gpu.astype('uint8'), fTrans, Econtrast_gpu, over255_gpu, lower0_gpu, self.AtmosphericLight_Y,blk_size, self.height, self.width)
-            start = time.time()
             self.update_min_e_kernel[blocks_per_grid, threads_per_block](Econtrast_gpu, over255_gpu, lower0_gpu, MinE_gpu, fOptTrs_gpu, lamdaL, self.height, self.width, fTrans)
         self.pfTransmission = cp.asnumpy(fOptTrs_gpu)
 
@@ -203,8 +208,11 @@ class Dehazer:
     def box_filter(self,arr, radius):
       width, height = arr.shape
       output_arr = cp.zeros((height, width), dtype='float32')
-
-      threads_per_block = (16, 16)
+      blk_size = BLOCK_SIZE
+      # maxx = (self.height // blk_size) * blk_size
+      # maxy = (self.width // blk_size) * blk_size
+      threads_per_block = (min(blk_size, self.height), min(blk_size, self.width))
+      # threads_per_block = (32,32)
       blocks_per_grid_x = int(np.ceil(width / threads_per_block[0]))
       blocks_per_grid_y = int(np.ceil(height / threads_per_block[1]))
       blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
@@ -235,7 +243,7 @@ class Dehazer:
       avg_intensity = np.mean(sampled_pixels)
       # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
       diff = abs(avg_intensity - AtmosphericLight_Y) / 255
-      metric = 0.3 + diff*0.8
+      metric = 0.35 + diff*0.75
       return np.ceil(metric*10)/10
 
 
@@ -243,8 +251,8 @@ class Dehazer:
     def RestoreImage(self):
         img_out = np.zeros(self.img_input.shape)
         transmission_clip = self.calculate_fast_transmission_clip_metric(self.img_input, self.AtmosphericLight_Y)
-
-        self.pfTransmission = np.maximum(self.pfTransmission, transmission_clip)
+        print(transmission_clip)
+        self.pfTransmission = np.maximum(self.pfTransmission,transmission_clip)
 
         for i in range(3):
             img_out[:,:,i] = np.clip(((self.img_input[:,:,i].astype(int) - self.AtmosphericLight[i]) / self.pfTransmission + self.AtmosphericLight[i]), 0, 255)
@@ -272,7 +280,7 @@ def calculate_temporal_coherence_kernel(current_frame, previous_frame, temporal_
                 if y < height and x < width:
                     current_val = current_frame[y, x]
                     previous_val = previous_frame[y, x]
-                    diff = abs(float32(current_val) - float32(previous_val))
+                    diff = abs((current_val) - (previous_val))
                     diff_sum += diff
                     count += 1
 
@@ -286,7 +294,7 @@ class FastDehazer(Dehazer):
         super().__init__(img_input)
         self.prev_transmission = None
         self.prev_frame = None
-        self.block_size = 8
+        self.block_size = 5
     
     def calculate_temporal_coherence(self,current_frame, previous_frame, block_size=8, sigma=1.5):
         height, width = current_frame.shape
@@ -297,7 +305,7 @@ class FastDehazer(Dehazer):
         d_previous_frame = cuda.to_device(np.ascontiguousarray(previous_frame))
         d_temporal_coherence = cuda.device_array((rows, cols), dtype=np.float32)
 
-        threads_per_block = (16, 16)
+        threads_per_block = (16,16)
         blocks_per_grid = ((rows + threads_per_block[0] - 1) // threads_per_block[0],
                           (cols + threads_per_block[1] - 1) // threads_per_block[1])
 
@@ -321,7 +329,7 @@ class FastDehazer(Dehazer):
           self.GuidedFilter_GPU(20, 0.01)
         else:
             self.AirLightEstimation((0,0), self.height, self.width)
-            self.TransmissionEstimation(8)
+            self.TransmissionEstimation(self.block_size)
             self.GaussianTransmissionRefine()
             self.GuidedFilter_GPU(20, 0.01)
 

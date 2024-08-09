@@ -13,7 +13,6 @@ def PSNR(original, compressed):
     return psnr
 
 def SSIM(original, processed):
-
     # Convert images to grayscale
     before_gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
     after_gray = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
