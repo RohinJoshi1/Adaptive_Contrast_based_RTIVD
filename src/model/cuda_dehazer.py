@@ -280,6 +280,12 @@ class FastDehazer(Dehazer):
     return corr
   
   def process_frame(self,frame):
+    self.img_input = frame
+    self.imgY = cv2.cvtColor(frame, cv2.COLOR_BGR2YCR_CB)[:,:,0]
+    self.imgY_gpu = cp.asarray(self.imgY)
+    self.width = frame.shape[1]
+    self.height = frame.shape[0]
+    self.pfTransmission = np.zeros(frame.shape[:2])
     tc = self.calculate_temporal_coherence(frame)
     if tc > self.temporal_coherence_threshold and self.prev_transmission is not None: 
       self.pfTransmission = self.prev_transmission.copy()
