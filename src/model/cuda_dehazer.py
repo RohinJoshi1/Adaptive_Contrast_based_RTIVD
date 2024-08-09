@@ -295,7 +295,7 @@ class FastDehazer(Dehazer):
       self.TransmissionEstimation(8)
       self.GaussianTransmissionRefine()
       self.GuidedFilter_GPU(20,0.01)
-    dehazed_frame = self.RestoreImage()
+    dehazed_frame = self.RestoreImage().astype("uint8")
     self.previous_frame = cv2.resize(frame, (64,64))
     self.prev_transmission = self.pfTransmission.copy()
     return dehazed_frame
@@ -350,6 +350,15 @@ def dehaze_video(video_url):
         cv2.imshow('Dehazed Frame',dehazed_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
           break
+        elif ret != True:
+            video_capture.release()
+            out.release()
+            cv2.destroyAllWindows()
+            break
+        cnt += 1
+        out.write(dehazed_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):   break 
+
         # if ret == True and cnt % 2 == 0:
         #     dhz = Dehazer(frame)
         #     if cnt==0:                                   # use the airlight of the first frame
@@ -364,14 +373,7 @@ def dehaze_video(video_url):
         #     cv2.imshow('result_img', im)
         #     out.write(im)
     #         #print(cnt)
-        elif ret != True:
-            video_capture.release()
-            out.release()
-            cv2.destroyAllWindows()
-            break
-        cnt += 1
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):   break 
+        
 
 
 
