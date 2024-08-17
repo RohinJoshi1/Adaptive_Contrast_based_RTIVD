@@ -237,13 +237,21 @@ class Dehazer:
         self.pfTransmission_gpu = cp.maximum(res, cp.full((self.height, self.width), 0.3))
 
     def calculate_fast_transmission_clip_metric(self,img_input, AtmosphericLight_Y):
-    # Sample a small subset of pixels for speed
+      # sample_size = 50
+      # sampled_pixels = img_input.reshape(-1, 3)[np.random.choice(img_input.size // 3, sample_size, replace=False)]
+      # avg_intensity = np.mean(sampled_pixels) - 1.5*np.std(sampled_pixels)
+      # diff = abs(avg_intensity - AtmosphericLight_Y) / 255
+      # metric = 0.3 + 0.7*diff
+      # return np.ceil(metric*10)/10
       sample_size = 50
       sampled_pixels = img_input.reshape(-1, 3)[np.random.choice(img_input.size // 3, sample_size, replace=False)]
-      avg_intensity = np.mean(sampled_pixels)
-      # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
-      diff = abs(avg_intensity - AtmosphericLight_Y) / 255
-      metric = 0.3 + diff*0.75
+      avg_intensity = (np.mean(sampled_pixels) - 1.5*(np.std(sampled_pixels))) / 255
+      normalized_brightness = AtmosphericLight_Y / 255.0
+      print("normalized_b",normalized_brightness)
+      inverse_brightness = 1 - min(avg_intensity,normalized_brightness)
+      output_range = 0.9 - 0.4
+      metric = 0.3 + (inverse_brightness * output_range)
+      
       return np.ceil(metric*10)/10
 
 
