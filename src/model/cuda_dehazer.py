@@ -243,7 +243,7 @@ class Dehazer:
       avg_intensity = np.mean(sampled_pixels)
       # Calculate a simple metric based on the difference between average intensity and AtmosphericLight_Y
       diff = abs(avg_intensity - AtmosphericLight_Y) / 255
-      metric = 0.35 + diff*0.75
+      metric = 0.3 + diff*0.75
       return np.ceil(metric*10)/10
 
 
@@ -294,8 +294,9 @@ class FastDehazer(Dehazer):
         super().__init__(img_input)
         self.prev_transmission = None
         self.prev_frame = None
-        self.block_size = 5
-    
+        self.block_size = BLOCK_SIZE
+        self.tc_threshold = 0.8
+
     def calculate_temporal_coherence(self,current_frame, previous_frame, block_size=8, sigma=1.5):
         height, width = current_frame.shape
         rows = height // block_size
@@ -323,8 +324,9 @@ class FastDehazer(Dehazer):
         self.width = frame.shape[1]
         self.height = frame.shape[0]
         self.pfTransmission = np.zeros(frame.shape[:2])
-        if self.prev_frame is not None: 
+        if self.prev_frame is not None:
           self.tc = self.calculate_temporal_coherence(self.imgY, self.prev_frame)
+        if self.prev_frame is not None and self.tc > self.tc_threshold:
           self.pfTransmission = self.prev_transmission.copy()
           self.GuidedFilter_GPU(20, 0.01)
         else:
