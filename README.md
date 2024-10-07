@@ -4,12 +4,6 @@ To install dependencies:
  pip install -r requirements.txt
 ```
 
-To run CPU:
-
-```
-  cd src/model
-  python Dehazer.py
-```
 
 To run GPU:
 
